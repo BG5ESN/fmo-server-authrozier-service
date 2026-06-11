@@ -1,0 +1,16 @@
+{
+  "role": "user",
+  "all": ["FMO/RAW", "FMO/TELE", "FMO/USER_RIG"],
+  "pub": [
+    "FMO/QSO/+",
+    "FMO/LATE/UID_V1/{uid}"
+  ],
+  "sub": [
+    "FMO/QSO/UID/{uid}",
+    "FMO/LATE/UID_V1/{uid}",
+    "FMO/PROFILE",
+    "FMO/MUTELIST",
+    "FMO/REMOTE_CONTROL",
+    "FMO/SERVER_INFO"
+  ]
+}

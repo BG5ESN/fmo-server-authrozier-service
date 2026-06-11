@@ -1,0 +1,13 @@
+bin/
+obj/
+out/
+*.user
+*.suo
+.vs/
+.idea/
+*.swp
+*~
+/data/
+test-case/*.log
+test-case/tmp-config/
+*.key
