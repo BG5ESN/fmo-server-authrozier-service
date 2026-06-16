@@ -5,6 +5,7 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Sas.Auth;
 using Sas.Logging;
@@ -53,6 +54,12 @@ Logger.Info("");
 Logger.Info($"Config: {Config.ConfigFilePath}");
 Logger.Info($"SAS HTTP auth mode");
 Logger.Info($"  MQTT: {config.Mqtt.Host}:{config.Mqtt.Port}");
+if (config.Mqtt.Clusters.Length > 0)
+{
+    Logger.Info($"  Clusters: {config.Mqtt.Clusters.Length} entries");
+    foreach (var c in config.Mqtt.Clusters)
+        Logger.Info($"    - uid={c.Uid} callsign={c.Callsign} mqtt={c.MqttHost}:{c.MqttPort}");
+}
 Logger.Info($"  Server: uid={config.Server.Uid} callsign={config.Server.Callsign} certFingerprint={(string.IsNullOrEmpty(config.Server.CertFingerprint) ? "(not set)" : config.Server.CertFingerprint)}");
 var adminsCount = config.Server.Admins.Length;
 var isAutoAdmin = adminsCount == 1
@@ -385,6 +392,21 @@ sealed class Config
     {
         public string Host { get; set; } = "";
         public int Port { get; set; } = 1883;
+        public ClusterEntry[] Clusters { get; set; } = [];
+
+        public sealed class ClusterEntry
+        {
+            [JsonPropertyName("uid")]
+            public long Uid { get; set; }
+            [JsonPropertyName("callsign")]
+            public string Callsign { get; set; } = "";
+            [JsonPropertyName("mqtt_host")]
+            public string MqttHost { get; set; } = "";
+            [JsonPropertyName("mqtt_port")]
+            public int MqttPort { get; set; } = 1883;
+            [JsonPropertyName("certFingerprint")]
+            public string CertFingerprint { get; set; } = "";
+        }
     }
 
     public sealed class TrustConfig
@@ -1037,6 +1059,9 @@ sealed class Config
             var allowIssuer = config.Trust.AllowIssuerSn.Length == 0 ? "(all)" : string.Join(",", config.Trust.AllowIssuerSn);
             Console.WriteLine($"  │  Allow Issuer: {allowIssuer}");
             Console.WriteLine($"  │  Admins:       {config.Server.Admins.Length} entry(s)");
+            Console.WriteLine($"  │  Clusters:     {config.Mqtt.Clusters.Length} entry(s)");
+            foreach (var c in config.Mqtt.Clusters)
+                Console.WriteLine($"  │    - {c.Callsign} uid={c.Uid} {c.MqttHost}:{c.MqttPort}");
             Console.WriteLine("  └─────────────────────────────────────────────");
             Console.WriteLine();
 
@@ -1047,6 +1072,9 @@ sealed class Config
                 Console.WriteLine("  ┌─ 提示 / Tip ────────────────────────────────");
                 Console.WriteLine("  │  多管理员请编辑 config.json 中的 admins 数组");
                 Console.WriteLine("  │  Multi-admin: edit 'admins' array in config.json");
+                Console.WriteLine("  │");
+                Console.WriteLine("  │  集群节点请编辑 config.json 中的 mqtt.clusters 数组");
+                Console.WriteLine("  │  Cluster nodes: edit 'mqtt.clusters' in config.json");
                 Console.WriteLine("  │");
                 Console.WriteLine("  │  配置将保存至 / Saved to:");
                 Console.WriteLine("  │  ~/.sas/config.json");
