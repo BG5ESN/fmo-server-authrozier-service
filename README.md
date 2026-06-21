@@ -117,9 +117,6 @@ FMO Server Authorizer Service 把信任锚点从"网络上的中心服务器"下
 ### 自行编译
 
 ```bash
-git clone https://code.xhh.ink/r/FMO/fmo-server-authorizer-service.git
-cd fmo-server-authorizer-service
-
 # 全平台打包（输出到 bin/ 目录）
 ./scripts/publish.ps1
 

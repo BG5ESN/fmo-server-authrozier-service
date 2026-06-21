@@ -117,9 +117,6 @@ No .NET installation required — extract and run.
 ### Build from Source
 
 ```bash
-git clone https://code.xhh.ink/r/FMO/fmo-server-authorizer-service.git
-cd fmo-server-authorizer-service
-
 # Build all platforms (outputs to bin/)
 ./scripts/publish.ps1
 
