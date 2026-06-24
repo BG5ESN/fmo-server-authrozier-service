@@ -65,6 +65,7 @@ Only devices holding legitimate certificates can establish communication. Securi
 - CBOR Compact Encoding – More compact than JSON, suitable for embedded scenarios
 - CRL Revocation Lists – Certificate revocation checking with periodic refresh
 - EMQX HTTP Auth Integration – Plug-and-play as EMQX Broker authentication callback
+- Cluster Support – Multiple MQTT Brokers sharing a single SAS instance for authentication
 - OTA Auto-Update – Built-in version checking and automatic upgrades
 - Cross-Platform – Windows / Linux / macOS (x64 & ARM64)
 
@@ -196,9 +197,13 @@ On first run, SAS writes configuration to `~/.sas/config.json` (Windows: `%USERP
     "callsign": "",
     "issuerSn": 0,
     "certFingerprint": "",
-    "admins": [{ "uid": 0, "certFingerprint": "", "role": "super" }]
+    "admins": [{ "uid": 0, "certFingerprint": "", "role": "admin" }]
   },
-  "mqtt": { "host": "", "port": 1883 },
+  "mqtt": {
+    "host": "",
+    "port": 1883,
+    "clusters": [{"uid": 0, "callsign": "", "mqtt_host": "", "mqtt_port": 1883, "certFingerprint": ""}]
+  },
   "trust": { "allowIssuerSn": [], "rootsDir": "~/.sas/roots" },
   "crl": { "refreshSec": 14400 },
   "http": {
@@ -245,7 +250,7 @@ On first run, SAS writes configuration to `~/.sas/config.json` (Windows: `%USERP
 
 ### Admin Management
 
-SAS provides interactive admin management commands to configure who has super/admin privileges:
+SAS provides interactive admin management commands to configure additional admin privileges:
 
 ```bash
 # Add admin (interactive)
@@ -258,9 +263,28 @@ sas --remove-admin [--config <path>]
 sas --list-admins [--config <path>]
 ```
 
-- On first addition, if the admin list is empty, SAS automatically adds the server itself (`server.uid` + `server.certFingerprint`) as the default super admin
-- Admin information is stored in the `server.admins` array in `config.json`
+- The **super role** is automatically determined by the server's own UID (`user.uid == server.uid`) — no manual configuration needed
+- The admin list only stores regular admins (admin role), stored in the `Server.admins` array in `config.json`
 - Use `--config <path>` to specify a non-default config file location
+
+### Cluster Management
+
+If you have multiple MQTT Brokers sharing a single SAS instance, you can add cluster nodes:
+
+```bash
+# Add cluster node (interactive)
+sas --add-cluster [--config <path>]
+
+# Remove cluster node (interactive)
+sas --remove-cluster [--config <path>]
+
+# List current cluster nodes
+sas --list-clusters [--config <path>]
+```
+
+- Cluster node information is stored in the `Mqtt.clusters` array in `config.json`
+- Once added, devices connecting to these Brokers can also authenticate through this SAS
+- The cluster node's UID owner automatically gets the super role on that node
 
 ### Startup Address Display
 

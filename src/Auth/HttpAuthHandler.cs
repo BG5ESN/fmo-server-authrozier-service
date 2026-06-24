@@ -24,6 +24,33 @@ sealed class HttpAuthHandler
         _aclStore = aclStore;
     }
 
+    private sealed record ServerIdentity(long Uid, string Callsign, string MqttHost, int MqttPort, string CertFingerprint);
+
+    private ServerIdentity? FindMatchingServer(string targetCallsign, long targetUid, string targetUrl, int targetPort)
+    {
+        if (string.Equals(targetCallsign, _config.Server.Callsign, StringComparison.OrdinalIgnoreCase)
+            && targetUid == _config.Server.Uid
+            && string.Equals(targetUrl, _config.Mqtt.Host, StringComparison.OrdinalIgnoreCase)
+            && targetPort == _config.Mqtt.Port)
+        {
+            return new ServerIdentity(_config.Server.Uid, _config.Server.Callsign,
+                _config.Mqtt.Host, _config.Mqtt.Port, _config.Server.CertFingerprint);
+        }
+
+        foreach (var c in _config.Mqtt.Clusters)
+        {
+            if (string.Equals(targetCallsign, c.Callsign, StringComparison.OrdinalIgnoreCase)
+                && targetUid == c.Uid
+                && string.Equals(targetUrl, c.MqttHost, StringComparison.OrdinalIgnoreCase)
+                && targetPort == c.MqttPort)
+            {
+                return new ServerIdentity(c.Uid, c.Callsign, c.MqttHost, c.MqttPort, c.CertFingerprint);
+            }
+        }
+
+        return null;
+    }
+
     public AuthResult Process(string username, string password)
     {
         Logger.Debug($"HTTP auth: >>> start processing username={username}");
@@ -112,37 +139,19 @@ sealed class HttpAuthHandler
             throw new AuthDeniedException("user revoked");
         }
 
-        var role = DetermineRole(user);
+        var server = FindMatchingServer(payload.TargetCallsign, payload.TargetUID, payload.TargetUrl, payload.TargetPort);
+        if (server == null)
+        {
+            Logger.Warn($"HTTP auth: no matching server/cluster for targetCallsign={payload.TargetCallsign} targetUID={payload.TargetUID} targetUrl={payload.TargetUrl} targetPort={payload.TargetPort}");
+            throw new AuthDeniedException("server identity mismatch");
+        }
+        
+        var role = DetermineRole(user, server);
         if (!string.IsNullOrEmpty(payload.Role) &&
             !string.Equals(payload.Role, role, StringComparison.OrdinalIgnoreCase))
         {
             Logger.Warn($"HTTP auth: role mismatch: claimed={payload.Role} actual={role}");
             throw new AuthDeniedException("role mismatch");
-        }
-
-        if (string.IsNullOrEmpty(payload.TargetCallsign) ||
-            !string.Equals(payload.TargetCallsign, _config.Server.Callsign, StringComparison.OrdinalIgnoreCase))
-        {
-            Logger.Warn($"HTTP auth: targetCallsign mismatch: got={payload.TargetCallsign} expected={_config.Server.Callsign}");
-            throw new AuthDeniedException("server identity mismatch");
-        }
-
-        if (payload.TargetUID != _config.Server.Uid)
-        {
-            Logger.Warn($"HTTP auth: targetUID mismatch: got={payload.TargetUID} expected={_config.Server.Uid}");
-            throw new AuthDeniedException("server identity mismatch");
-        }
-
-        if (!string.Equals(payload.TargetUrl, _config.Mqtt.Host, StringComparison.OrdinalIgnoreCase))
-        {
-            Logger.Warn($"HTTP auth: targetUrl mismatch: got={payload.TargetUrl} expected={_config.Mqtt.Host}");
-            throw new AuthDeniedException("server identity mismatch");
-        }
-
-        if (payload.TargetPort != _config.Mqtt.Port)
-        {
-            Logger.Warn($"HTTP auth: targetPort mismatch: got={payload.TargetPort} expected={_config.Mqtt.Port}");
-            throw new AuthDeniedException("server identity mismatch");
         }
 
         byte[] serverFpBytes;
@@ -156,14 +165,14 @@ sealed class HttpAuthHandler
             throw new AuthDeniedException("invalid server fingerprint");
         }
 
-        if (string.IsNullOrEmpty(_config.Server.CertFingerprint))
+        if (string.IsNullOrEmpty(server.CertFingerprint))
         {
-            Logger.Warn("HTTP auth: server.certFingerprint not configured, cannot verify server identity");
+            Logger.Warn("HTTP auth: server certFingerprint not configured for matched server");
             throw new AuthDeniedException("server cert fingerprint not configured");
         }
 
         byte[] expectedFp;
-        try { expectedFp = Base64Url.Decode(_config.Server.CertFingerprint); }
+        try { expectedFp = Base64Url.Decode(server.CertFingerprint); }
         catch
         {
             Logger.Warn("HTTP auth: invalid server.certFingerprint base64url");
@@ -183,10 +192,10 @@ sealed class HttpAuthHandler
             throw new AuthDeniedException("timestamp expired");
         }
 
-        Logger.Debug($"HTTP auth: verifying proof: serverUid={_config.Server.Uid} targetCallsign={_config.Server.Callsign} mqttHost={_config.Mqtt.Host} mqttPort={_config.Mqtt.Port}");
+        Logger.Debug($"HTTP auth: verifying proof: serverUid={server.Uid} targetCallsign={server.Callsign} mqttHost={server.MqttHost} mqttPort={server.MqttPort}");
         var proofOk = HttpProofVerifier.Verify(
-            _config.Server.Uid, _config.Server.Callsign, _config.Server.Uid,
-            _config.Mqtt.Host, _config.Mqtt.Port, serverFpBytes,
+            server.Uid, server.Callsign, server.Uid,
+            server.MqttHost, server.MqttPort, serverFpBytes,
             payload.Timestamp, user, payload.Role, payload.Proof.Signature);
 
         if (!proofOk)
@@ -220,10 +229,10 @@ sealed class HttpAuthHandler
         };
     }
 
-    private string DetermineRole(UserCert user)
+    private string DetermineRole(UserCert user, ServerIdentity server)
     {
         if (_config.Server.Admins.Length == 0)
-            return user.Uid == _config.Server.Uid ? "super" : "user";
+            return user.Uid == server.Uid ? "super" : "user";
 
         var userFp = user.Fingerprint();
         foreach (var admin in _config.Server.Admins)
@@ -236,10 +245,10 @@ sealed class HttpAuthHandler
             catch { continue; }
 
             if (adminFp.AsSpan().SequenceEqual(userFp))
-                return string.IsNullOrEmpty(admin.Role) ? "super" : admin.Role;
+                return string.IsNullOrEmpty(admin.Role) ? "admin" : admin.Role;
         }
 
-        return "user";
+        return user.Uid == server.Uid ? "super" : "user";
     }
 }
 
