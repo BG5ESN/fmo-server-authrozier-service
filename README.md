@@ -65,6 +65,7 @@ FMO Server Authorizer Service 把信任锚点从"网络上的中心服务器"下
 - CBOR 紧凑编码 – 比 JSON 更紧凑，适合嵌入式场景
 - CRL 吊销列表 – 支持证书吊销检查，定时刷新
 - EMQX HTTP 认证集成 – 作为 EMQX Broker 认证回调即插即用
+- 集群支持 – 多个 MQTT Broker 共享同一 SAS 实例进行认证
 - OTA 自动更新 – 内置版本检查与自动升级
 - 跨平台 – Windows / Linux / macOS (x64 & ARM64)
 
@@ -196,9 +197,13 @@ Body: { "username": "${username}", "password": "${password}" }
     "callsign": "",
     "issuerSn": 0,
     "certFingerprint": "",
-    "admins": [{ "uid": 0, "certFingerprint": "", "role": "super" }]
+    "admins": [{ "uid": 0, "certFingerprint": "", "role": "admin" }]
   },
-  "mqtt": { "host": "", "port": 1883 },
+  "mqtt": {
+    "host": "",
+    "port": 1883,
+    "clusters": [{"uid": 0, "callsign": "", "mqtt_host": "", "mqtt_port": 1883, "certFingerprint": ""}]
+  },
   "trust": { "allowIssuerSn": [], "rootsDir": "~/.sas/roots" },
   "crl": { "refreshSec": 14400 },
   "http": {
@@ -245,7 +250,7 @@ Body: { "username": "${username}", "password": "${password}" }
 
 ### 管理员管理
 
-SAS 提供交互式管理员管理命令，用于配置谁拥有 super/admin 权限：
+SAS 提供交互式管理员管理命令，用于配置额外的管理员权限：
 
 ```bash
 # 添加管理员（交互式）
@@ -258,9 +263,28 @@ sas --remove-admin [--config <path>]
 sas --list-admins [--config <path>]
 ```
 
-- 首次添加时，若管理员列表为空，SAS 会自动将服务器自身（`server.uid` + `server.certFingerprint`）作为默认 super 管理员
-- 管理员信息存储在 `config.json` 的 `server.admins` 数组中
+- **super 角色**由服务器自身 UID 自动决定（`user.uid == server.uid`），无需手动配置
+- 管理员列表仅存储普通管理员（admin 角色），存储在 `config.json` 的 `Server.admins` 数组中
 - 可通过 `--config <path>` 指定非默认位置的配置文件
+
+### 集群管理
+
+如果你有多个 MQTT Broker 共用同一个 SAS 实例，可以添加集群节点：
+
+```bash
+# 添加集群节点（交互式）
+sas --add-cluster [--config <path>]
+
+# 删除集群节点（交互式）
+sas --remove-cluster [--config <path>]
+
+# 列出当前集群节点
+sas --list-clusters [--config <path>]
+```
+
+- 集群节点信息存储在 `config.json` 的 `Mqtt.clusters` 数组中
+- 添加后，连接到这些 Broker 的设备也能通过本 SAS 完成认证
+- 集群节点的 UID 所有者在该节点上自动获得 super 角色
 
 ### 启动地址显示
 

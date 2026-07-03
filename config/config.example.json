@@ -1,6 +1,6 @@
 {
-  "server": { "uid": 0, "callsign": "", "issuerSn": 0, "certFingerprint": "", "admins": [{ "uid": 0, "certFingerprint": "", "role": "super" }] },
-  "mqtt": { "host": "", "port": 1883 },
+  "server": { "uid": 0, "callsign": "", "issuerSn": 0, "certFingerprint": "", "admins": [{ "uid": 0, "certFingerprint": "", "role": "admin" }] },
+  "mqtt": { "host": "", "port": 1883, "clusters": [{ "uid": 0, "callsign": "BA1AAA", "mqtt_host":"xxx.xxx.xxx.xxx", "mqtt_port": 1883, "certFingerprint": "" }] },
   "trust": { "allowIssuerSn": [], "rootsDir": "/data/sas/roots" },
   "crl": { "refreshSec": 14400 },
   "http": { "addr": "0.0.0.0", "port": 8080, "ttlSec": 14400, "responseTemplate": "emqx", "maxBodyBytes": 65536, "maxConcurrent": 128 },
