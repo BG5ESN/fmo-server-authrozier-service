@@ -178,12 +178,14 @@ sealed class HttpServer
 
         int maxRead = length > 0 ? (int)length : _maxBodyBytes;
 
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
         var buffer = new byte[maxRead];
         var totalRead = 0;
         while (totalRead < maxRead)
         {
             var read = await request.InputStream.ReadAsync(
-                buffer, totalRead, Math.Min(maxRead - totalRead, 4096));
+                buffer, totalRead, Math.Min(maxRead - totalRead, 4096), cts.Token);
             if (read == 0) break;
             totalRead += read;
         }
