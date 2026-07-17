@@ -348,7 +348,7 @@ static async Task CheckUpdateCommand()
             ExtractTarGz(archivePath, tempDir);
         File.Delete(archivePath);
 
-        var exeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "Sas.exe" : "Sas";
+        var exeName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "sas.exe" : "sas";
         var newExe = Directory.GetFiles(tempDir, exeName, SearchOption.AllDirectories).FirstOrDefault()
                      ?? throw new InvalidOperationException($"{exeName} not found in archive");
 
@@ -1169,7 +1169,7 @@ sealed class Config
         if (Console.IsInputRedirected)
             Fail("未找到配置文件且终端非交互式。\n" +
                  "  请使用 CLI 参数初始化 / Use CLI args to initialize:\n" +
-                 "    sas.exe --server-uid 12345 --server-callsign BG5ESN --mqtt-host ... --cert-fingerprint ...\n" +
+                 "    sas --server-uid 12345 --server-callsign BG5ESN --mqtt-host ... --cert-fingerprint ...\n" +
                  "  或在 Docker 中挂载 / Or in Docker: docker run ... --roots-dir /data/sas/roots");
 
         while (true)
@@ -1524,8 +1524,8 @@ sealed class Config
                 Logger.Error(m);
             Logger.Error("");
             Logger.Error($"请编辑 {ConfigPath} 补充以下字段，或运行 / Fix: edit config file, or run");
-            Logger.Error("  sas.exe（无参数）启动交互式配置向导。 / sas.exe without arguments to start setup wizard.");
-            Logger.Error("  帮助：sas.exe --help / Help: sas.exe --help");
+            Logger.Error("  sas（无参数）启动交互式配置向导。 / sas without arguments to start setup wizard.");
+            Logger.Error("  帮助：sas --help / Help: sas --help");
             Environment.Exit(1);
         }
     }
@@ -1535,20 +1535,20 @@ sealed class Config
         Console.WriteLine("FMO V4.0 Server Authorizer Service / 服务器授权服务");
         Console.WriteLine();
         Console.WriteLine("用法 / Usage:");
-        Console.WriteLine("  sas.exe                                  交互式配置向导 / Interactive setup");
-        Console.WriteLine("  sas.exe --server-uid ... --cert-fingerprint ...   命令行初始化 / CLI init");
-        Console.WriteLine("  sas.exe --update                         检查并应用更新 / Check and apply updates");
-        Console.WriteLine("  sas.exe --help                           显示此帮助 / Show this help");
+        Console.WriteLine("  sas                                  交互式配置向导 / Interactive setup");
+        Console.WriteLine("  sas --server-uid ... --cert-fingerprint ...   命令行初始化 / CLI init");
+        Console.WriteLine("  sas --update                         检查并应用更新 / Check and apply updates");
+        Console.WriteLine("  sas --help                           显示此帮助 / Show this help");
         Console.WriteLine();
         Console.WriteLine("管理员管理 / Admin Management:");
-        Console.WriteLine("  sas.exe --add-admin [--config <path>]    添加管理员 / Add admin");
-        Console.WriteLine("  sas.exe --remove-admin [--config <path>] 删除管理员 / Remove admin");
-        Console.WriteLine("  sas.exe --list-admins [--config <path>]  查看管理员列表 / List admins");
+        Console.WriteLine("  sas --add-admin [--config <path>]    添加管理员 / Add admin");
+        Console.WriteLine("  sas --remove-admin [--config <path>] 删除管理员 / Remove admin");
+        Console.WriteLine("  sas --list-admins [--config <path>]  查看管理员列表 / List admins");
         Console.WriteLine();
         Console.WriteLine("集群管理 / Cluster Management:");
-        Console.WriteLine("  sas.exe --add-cluster [--config <path>]  添加集群节点 / Add cluster node");
-        Console.WriteLine("  sas.exe --remove-cluster [--config <path>] 删除集群节点 / Remove cluster node");
-        Console.WriteLine("  sas.exe --list-clusters [--config <path>] 查看集群节点 / List cluster nodes");
+        Console.WriteLine("  sas --add-cluster [--config <path>]  添加集群节点 / Add cluster node");
+        Console.WriteLine("  sas --remove-cluster [--config <path>] 删除集群节点 / Remove cluster node");
+        Console.WriteLine("  sas --list-clusters [--config <path>] 查看集群节点 / List cluster nodes");
         Console.WriteLine();
         Console.WriteLine("必填参数 / Required:");
         Console.WriteLine("  --server-uid <long>                      FMO 设备唯一数字 ID / FMO device UID");
