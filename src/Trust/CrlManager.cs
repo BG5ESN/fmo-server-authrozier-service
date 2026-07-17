@@ -60,6 +60,8 @@ public sealed class CrlManager : IDisposable
             {
                 var cachedJson = File.ReadAllText(cachePath);
                 var doc = JsonDocument.Parse(cachedJson).RootElement;
+                if (!doc.TryGetProperty("issuerSn", out _) || !doc.TryGetProperty("entries", out _))
+                    throw new InvalidDataException("incomplete CRL cache");
                 var crl = IntermediateCrl.FromJson(doc);
                 if (crl.VerifyBy(intermediate) && crl.IssuerSn == intermediate.Sn)
                 {
@@ -168,6 +170,13 @@ public sealed class CrlManager : IDisposable
         {
             var json = await _http.GetStringAsync(root.Crl);
             var doc = JsonDocument.Parse(json).RootElement;
+
+            if (!doc.TryGetProperty("issuerSn", out _) || !doc.TryGetProperty("entries", out _))
+            {
+                Logger.Info($"Root CRL not published yet: {root.Crl}");
+                return;
+            }
+
             var crl = RootCrl.FromJson(doc);
 
             if (!crl.VerifyBy(root))
@@ -216,6 +225,13 @@ public sealed class CrlManager : IDisposable
         {
             var json = await _http.GetStringAsync(issuer.Crl);
             var doc = JsonDocument.Parse(json).RootElement;
+
+            if (!doc.TryGetProperty("issuerSn", out _) || !doc.TryGetProperty("entries", out _))
+            {
+                Logger.Info($"Intermediate CRL not published yet: {issuer.Crl}");
+                return;
+            }
+
             var crl = IntermediateCrl.FromJson(doc);
 
             if (!crl.VerifyBy(issuer))
@@ -269,6 +285,8 @@ public sealed class CrlManager : IDisposable
             {
                 var json = File.ReadAllText(rootCachePath);
                 var doc = JsonDocument.Parse(json).RootElement;
+                if (!doc.TryGetProperty("issuerSn", out _) || !doc.TryGetProperty("entries", out _))
+                    continue;
                 var crl = RootCrl.FromJson(doc);
                 if (crl.VerifyBy(root) && crl.IssuerSn == root.Sn)
                 {

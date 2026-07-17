@@ -48,7 +48,7 @@ sealed class HttpServer
             Logger.Error($"  netsh http add urlacl url=http://+:{_port}/auth/ user=Everyone");
             throw;
         }
-        Logger.Info($"HTTP auth listening on {_addr}:{_port}/auth");
+        Logger.Info("HTTP auth server ready");
     }
 
     public async Task RunAsync(CancellationToken ct = default)
@@ -123,8 +123,11 @@ sealed class HttpServer
             var username = json.TryGetProperty("username", out var un) ? un.GetString() ?? "" : "";
             var password = json.TryGetProperty("password", out var pw) ? pw.GetString() ?? "" : "";
 
+            Logger.Debug($"HTTP auth: received request username={username} password.length={password.Length}");
+
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
+                Logger.Debug("HTTP auth: empty username or password, denying");
                 await WriteDenyResponse(ctx.Response);
                 return;
             }
@@ -169,18 +172,20 @@ sealed class HttpServer
 
     private async Task<string?> ReadRequestBodyAsync(HttpListenerRequest request)
     {
-        if (request.ContentLength64 > _maxBodyBytes)
+        var length = request.ContentLength64;
+        if (length > _maxBodyBytes)
             return null;
 
-        var buffer = new byte[_maxBodyBytes + 1];
+        int maxRead = length > 0 ? (int)length : _maxBodyBytes;
+
+        var buffer = new byte[maxRead];
         var totalRead = 0;
-        int read;
-        while ((read = await request.InputStream.ReadAsync(
-            buffer, totalRead, Math.Min(buffer.Length - totalRead, 4096))) > 0)
+        while (totalRead < maxRead)
         {
+            var read = await request.InputStream.ReadAsync(
+                buffer, totalRead, Math.Min(maxRead - totalRead, 4096));
+            if (read == 0) break;
             totalRead += read;
-            if (totalRead > _maxBodyBytes)
-                return null;
         }
         return Encoding.UTF8.GetString(buffer, 0, totalRead);
     }
