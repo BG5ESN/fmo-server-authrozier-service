@@ -174,18 +174,20 @@ curl -X POST http://127.0.0.1:8080/auth \
 
 ## Docker Compose Deployment
 
-The included `docker-compose.yml` starts SAS and EMQX together. EMQX and SAS share an internal Docker network, and the HTTP authenticator is preconfigured to call `http://sas:8080/auth`; no additional Dashboard authentication setup is required.
+> This deployment is collectively called **fmo-server-suite**: the Docker Compose all-in-one deployment of the FMO server components (SAS + EMQX + FAS), ready to use with `docker compose up -d`.
+
+The included `docker-compose.yml` starts SAS, EMQX, and FMO Audit Service (FAS) together and, on first startup, automatically configures EMQX authentication, generates a dedicated FAS EMQX API Key/Secret, and wires up FAS's EMQX connection and connector/rule — the only manual step left is creating the FAS administrator account.
 
 ```bash
 # Create the deployment configuration and set the server UID, callsign,
 # certificate fingerprint, and EMQX Dashboard password.
 cp .env.example .env
 
-# Start SAS and EMQX.
+# Start SAS, EMQX, and FAS.
 docker compose up -d
 
 # View service logs.
-docker compose logs -f sas emqx
+docker compose logs -f suite-init emqx fas-init sas fas
 ```
 
 On Windows PowerShell, use:
@@ -194,14 +196,74 @@ On Windows PowerShell, use:
 Copy-Item .env.example .env
 ```
 
+On first startup, the stack automatically:
+
+- Starts SAS with the parameters from `.env` (`SAS_MQTT_HOST` is the device-facing public MQTT hostname/IP and must match the `url` field of the APRS STATION broadcast)
+- Points EMQX's HTTP Password Authentication at `http://sas:8080/auth`
+- Generates a dedicated internal EMQX API Key/Secret for FAS (no manual creation needed)
+- Configures FAS with that EMQX URL and API Key/Secret
+- Creates the EMQX connector/rule FAS needs (`FMO/RAW` topic forwarded to `http://fas:9527/api/ingest`)
+
+The only remaining manual step: visit `http://<server>:9527` and complete the **FAS administrator account** first-time setup.
+
 Published ports:
 
 | Service | Address | Purpose |
 |---------|---------|---------|
 | EMQX MQTT | `tcp://<server>:1883` | FMO device connections |
 | EMQX Dashboard | `http://<server>:18083` | Sign in with the Dashboard credentials in `.env` |
+| FAS Web UI | `http://<server>:9527` | Complete the administrator setup and audit service configuration |
 
-The SAS HTTP authentication port is exposed only on the internal Compose network and is not reachable directly from the host. The `sas-data` volume persists SAS configuration and root certificates, while `emqx-data` persists EMQX data. Do not remove these volumes unless you intend to fully reinitialize the deployment.
+The SAS HTTP authentication port is exposed only on the internal Compose network and is not reachable directly from the host. The `sas-data` volume persists SAS configuration and root certificates, `emqx-data` persists EMQX data, `fas-data` persists FAS's SQLite database and configuration, and `suite-bootstrap` holds the internally generated EMQX API Key/Secret. Do not remove these volumes unless you intend to fully reinitialize the deployment.
+
+### Use custom Root CAs with file mounts
+
+The `sas.volumes` section in `docker-compose.yml` contains a commented example. Instead of mounting an entire certificate directory, it mounts each host certificate file read-only directly into the existing SAS directory `/home/app/.sas/roots`. The files must be **FMO V4 Root CA JSON certificates**, not PEM/X.509 TLS certificates.
+
+Edit `docker-compose.yml`, uncomment the example, and add or remove mappings as needed:
+
+```yaml
+services:
+  sas:
+    volumes:
+      - type: bind
+        source: ./root-ca-a.json
+        target: /home/app/.sas/roots/root-ca-a.json
+        read_only: true
+      - type: bind
+        source: ./root-ca-b.json
+        target: /home/app/.sas/roots/root-ca-b.json
+        read_only: true
+```
+
+- Every `source` must be an existing host file before the container is created.
+- Every `target` must be directly under `/home/app/.sas/roots/`, have a unique filename, and end in `.json`.
+- Remove extra entries when only one CA is needed; add more file mappings for additional CAs.
+- The mounts remain read-only. Root CA files should contain public-key information only; never mount a CA private key.
+
+Apply the mappings for the first time:
+
+```bash
+docker compose up -d --force-recreate sas
+docker compose logs sas
+```
+
+#### Update a mapped CA
+
+After overwriting a certificate at the same source path, or after adding, removing, renaming, or changing a `source` / `target`, run:
+
+```bash
+docker compose up -d --force-recreate sas
+```
+
+Use `up --force-recreate`, not only `docker compose restart sas`. Recreating the container establishes fresh single-file bind mounts and lets SAS rescan the Root CAs in a new process. This is especially important when the host certificate is updated with an atomic temporary-file rename, because the old container mount may still reference the previous file.
+
+### Internal auto-configuration
+
+- **`suite-init`** (one-shot): on first run, generates an internal-only EMQX API Key/Secret and writes it to `emqx_api_key.conf` in the `suite-bootstrap` volume; skips generation if the file already exists, so restart/upgrade never rotates the credential.
+- **`emqx`**: loads that key via `EMQX_API_KEY__BOOTSTRAP_FILE` and auto-configures HTTP authentication pointing at `http://sas:8080/auth` via `EMQX_AUTHENTICATION__1`.
+- **`fas-init`** (one-shot): reads the API Key/Secret from `suite-bootstrap` and runs `dotnet fmo-audit-service.dll --configure` to save FAS's EMQX connection and create the connector/rule.
+- **`fas`**: starts after `fas-init` succeeds, loading the saved EMQX settings.
 
 To update, pull the latest images and let Compose recreate only services that require an update:
 

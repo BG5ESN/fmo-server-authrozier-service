@@ -1,4 +1,29 @@
 services:
+  # One-shot: generates the internal EMQX API key/secret used by fas-init.
+  # Idempotent — skips generation if suite-bootstrap already has a credential.
+  suite-init:
+    image: alpine:3.20
+    container_name: fmo-suite-init
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        f=/bootstrap/emqx_api_key.conf
+        if [ -s "$$f" ]; then
+          echo "suite-init: bootstrap file already exists, keeping existing credential"
+        else
+          key="fas-suite-$$(tr -dc 'a-z0-9' </dev/urandom | head -c 16)"
+          secret="$$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48)"
+          echo "$${key}:$${secret}:administrator" > "$$f"
+          chmod 644 "$$f"
+          echo "suite-init: generated new EMQX API key (id: $${key})"
+        fi
+    volumes:
+      - suite-bootstrap:/bootstrap
+    networks:
+      - fmo
+
   sas:
     image: ghcr.io/bg5esn/fmo-server-authrozier-service:latest
     container_name: fmo-sas
@@ -18,25 +43,102 @@ services:
       - "8080"
     volumes:
       - sas-data:/home/app/.sas
+      # Optional custom FMO Root CA JSON files: uncomment and edit one entry per CA.
+      # Each host file must exist before `docker compose up`, and each target must be unique.
+      # - type: bind
+      #   source: ./root-ca-a.json
+      #   target: /home/app/.sas/roots/root-ca-a.json
+      #   read_only: true
+      # - type: bind
+      #   source: ./root-ca-b.json
+      #   target: /home/app/.sas/roots/root-ca-b.json
+      #   read_only: true
     networks:
       - fmo
 
   emqx:
-    image: emqx/emqx:5.8.6
+    image: emqx/emqx:5.8.9
     container_name: fmo-emqx
     restart: unless-stopped
     depends_on:
-      - sas
+      suite-init:
+        condition: service_completed_successfully
+      sas:
+        condition: service_started
     environment:
+      EMQX_API_KEY__BOOTSTRAP_FILE: /bootstrap/emqx_api_key.conf
       EMQX_AUTHENTICATION__1: >-
         {mechanism = password_based, backend = http, method = post, url = "http://sas:8080/auth", headers = {"Content-Type" = "application/json"}, body = {username = "$${username}", password = "$${password}"}}
       EMQX_DASHBOARD__DEFAULT_USERNAME: '"${EMQX_DASHBOARD_USERNAME:-admin}"'
       EMQX_DASHBOARD__DEFAULT_PASSWORD: '"${EMQX_DASHBOARD_PASSWORD:?Set EMQX_DASHBOARD_PASSWORD in .env}"'
     ports:
-      - "1883:1883"
-      - "18083:18083"
+      - "${MQTT_PORT:-1883}:1883"
+      - "${EMQX_DASHBOARD_PORT:-18083}:18083"
     volumes:
       - emqx-data:/opt/emqx/data
+      - suite-bootstrap:/bootstrap:ro
+    healthcheck:
+      test: ["CMD", "/opt/emqx/bin/emqx", "ctl", "status"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - fmo
+
+  # One-shot: waits for EMQX, reads the bootstrap API key/secret, and runs
+  # `fmo-audit-service --configure` so FAS auto-wires its EMQX connector/rule.
+  fas-init:
+    image: ghcr.io/bg5esn/fmo-audit-service:latest
+    container_name: fmo-fas-init
+    restart: "no"
+    depends_on:
+      emqx:
+        condition: service_healthy
+      suite-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        line=$$(head -n1 /bootstrap/emqx_api_key.conf)
+        key=$${line%%:*}
+        rest=$${line#*:}
+        secret=$${rest%%:*}
+        export EMQX_API_KEY="$$key"
+        export EMQX_API_SECRET="$$secret"
+        export EMQX_URL="http://emqx:18083"
+        export EMQX_MONITOR_DB="/data/fmo-audit-service.db"
+        export EMQX_MONITOR_WEBHOOK_URL="http://fas:9527/api/ingest"
+        # emqx healthcheck passes once the broker is up, slightly before the
+        # Dashboard/REST API listener (18083) and bootstrap API key are ready — retry a few times
+        attempt=1
+        max=15
+        while [ $$attempt -le $$max ]; do
+          set +e
+          out=$$(dotnet fmo-audit-service.dll --configure 2>&1)
+          rc=$$?
+          set -e
+          if [ $$rc -eq 0 ]; then
+            echo "$$out"
+            exit 0
+          fi
+          case "$$out" in
+            *"连接参数已保存"*)
+              echo "$$out"
+              echo "fas-init: connector not reachable yet (fas container starts after this step) — settings/bridge/rule are saved, EMQX will auto-reconnect once fas is up"
+              exit 0
+              ;;
+          esac
+          echo "fas-init: attempt $$attempt/$$max failed, retrying in 3s ..."
+          echo "$$out"
+          attempt=$$((attempt + 1))
+          sleep 3
+        done
+        exit 1
+    volumes:
+      - fas-data:/data
+      - suite-bootstrap:/bootstrap:ro
     networks:
       - fmo
 
@@ -44,10 +146,21 @@ services:
     image: ghcr.io/bg5esn/fmo-audit-service:latest
     container_name: fmo-audit
     restart: unless-stopped
+    depends_on:
+      fas-init:
+        condition: service_completed_successfully
+      emqx:
+        condition: service_healthy
     ports:
-      - "9527:9527"
+      - "${FAS_PORT:-9527}:9527"
     volumes:
       - fas-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9527' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
     networks:
       - fmo
 
@@ -55,6 +168,7 @@ volumes:
   sas-data:
   emqx-data:
   fas-data:
+  suite-bootstrap:
 
 networks:
   fmo:

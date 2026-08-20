@@ -26,7 +26,7 @@ COPY --from=build --chown=app:app /out/ ./
 ENV HOME=/home/app
 ENV DOTNET_RUNNING_IN_CONTAINER=true
 
-RUN mkdir -p /home/app/.sas \
+RUN mkdir -p /home/app/.sas/roots \
     && chown -R app:app /home/app/.sas
 
 USER app

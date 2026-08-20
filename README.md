@@ -174,7 +174,9 @@ curl -X POST http://127.0.0.1:8080/auth \
 
 ## Docker Compose 部署
 
-仓库提供 `docker-compose.yml`，一次启动 SAS、EMQX 和 FMO Audit Service (FAS)。三个服务位于同一内部 Docker 网络；EMQX 的 HTTP 认证器已配置为调用 `http://sas:8080/auth`，无需在 Dashboard 中重复创建认证器。
+> 本部署方案统称为 **fmo-server-suite**：FMO 服务端组件（SAS + EMQX + FAS）的 Docker Compose 一体化部署，`docker compose up -d` 即可投入使用。
+
+仓库提供 `docker-compose.yml`，一次启动 SAS、EMQX 和 FMO Audit Service (FAS)，并在首次启动时自动完成 EMQX 认证、FAS 专用 API Key / Secret 生成以及 FAS 的 EMQX 连接与 connector / rule 配置，唯一需要人工完成的是创建 FAS 管理员账号。
 
 ```bash
 # 创建实际部署配置并填写服务器 UID、呼号、证书指纹和 EMQX Dashboard 密码
@@ -184,7 +186,7 @@ cp .env.example .env
 docker compose up -d
 
 # 查看服务日志
-docker compose logs -f sas emqx fas
+docker compose logs -f suite-init emqx fas-init sas fas
 ```
 
 Windows PowerShell 可用：
@@ -192,6 +194,16 @@ Windows PowerShell 可用：
 ```powershell
 Copy-Item .env.example .env
 ```
+
+首次启动会自动完成：
+
+- SAS 使用 `.env` 中的参数启动（`SAS_MQTT_HOST` 填设备侧访问 MQTT 的公开域名/IP，须与 APRS STATION 广播的 `url` 字段一致）
+- EMQX 的 HTTP Password Authentication 自动指向 `http://sas:8080/auth`
+- 内部一次性生成 FAS 专用的 EMQX API Key / Secret（不需要用户手工创建）
+- FAS 自动配置 EMQX 连接地址与该 API Key / Secret
+- EMQX 上 FAS 所需的 connector / rule（`FMO/RAW` 主题转发到 `http://fas:9527/api/ingest`）自动创建
+
+用户唯一仍需人工完成的步骤：访问 `http://<server>:9527`，完成 **FAS 管理员账号**的首次创建。
 
 对外端口：
 
@@ -201,19 +213,56 @@ Copy-Item .env.example .env
 | EMQX Dashboard | `http://<server>:18083` | 使用 `.env` 中的 Dashboard 账号登录 |
 | FAS Web UI | `http://<server>:9527` | 初始化管理员并配置审计服务 |
 
-SAS 的 HTTP 认证端口仅在 Compose 内部网络开放，不能从宿主机直接访问。`sas-data` 卷持久化 SAS 配置和根证书，`emqx-data` 卷持久化 EMQX 数据；不要删除这些卷，除非需要完全重新初始化。
+SAS 的 HTTP 认证端口仅在 Compose 内部网络开放，不能从宿主机直接访问。`sas-data` 卷持久化 SAS 配置和根证书，`emqx-data` 卷持久化 EMQX 数据，`fas-data` 卷持久化 FAS 的 SQLite 数据库与配置，`suite-bootstrap` 卷保存内部生成的 EMQX API Key / Secret；不要删除这些卷，除非需要完全重新初始化。
 
-### FAS 配置
+### 通过文件映射使用自定义 Root CA
 
-[FMO Audit Service (FAS)](https://github.com/bi9bbl/fmo-audit-service) 已加入此 Compose 网络，但不会接收初始化参数。先在 `http://<server>:18083` 创建 API Key / Secret，再访问 FAS Web UI 完成管理员初始化和 EMQX 连接配置。
+`docker-compose.yml` 的 `sas.volumes` 中包含注释形式的示例。它不会映射整个证书目录，而是把每个宿主机证书文件分别只读映射到 SAS 已有的 `/home/app/.sas/roots` 目录。需要的是 **FMO V4 Root CA JSON 证书**，不是 PEM / X.509 TLS 证书。
 
-FAS 的 EMQX 目标 URL 必须填写：
+编辑 `docker-compose.yml`，取消注释并按需增删映射：
 
-```text
-http://emqx:18083
+```yaml
+services:
+  sas:
+    volumes:
+      - type: bind
+        source: ./root-ca-a.json
+        target: /home/app/.sas/roots/root-ca-a.json
+        read_only: true
+      - type: bind
+        source: ./root-ca-b.json
+        target: /home/app/.sas/roots/root-ca-b.json
+        read_only: true
 ```
 
-`emqx` 是 Compose 服务名，Docker 内部 DNS 会将它解析到 EMQX 容器。不要填写 `http://localhost:18083`，它会指向 FAS 容器自身；也不需要填写宿主机 IP。
+- 每个 `source` 必须是启动前已经存在的宿主机文件。
+- 每个 `target` 必须直接位于 `/home/app/.sas/roots/`，使用互不重复且以 `.json` 结尾的文件名。
+- 只需要一个 CA 时删除多余映射；需要更多 CA 时继续添加文件映射。
+- 映射保持只读。Root CA 文件只应包含公钥信息，不要映射任何 CA 私钥。
+
+首次应用映射：
+
+```bash
+docker compose up -d --force-recreate sas
+docker compose logs sas
+```
+
+#### 更新映射的 CA
+
+无论是覆盖同一路径下的证书内容，还是新增、删除、改名或更换 `source` / `target`，更新后都执行：
+
+```bash
+docker compose up -d --force-recreate sas
+```
+
+这里需要 `up --force-recreate`，不能只使用 `docker compose restart sas`：重建容器会重新建立单文件 bind mount，同时让 SAS 在新进程启动时重新扫描 Root CA。使用临时文件加重命名的原子替换方式更新宿主机证书时，这一点尤其重要，因为原容器的文件挂载可能仍指向旧文件。
+
+### 内部自动配置
+
+- **`suite-init`**（一次性）：首次运行时生成仅供 EMQX ↔ FAS 内部使用的 API Key / Secret，写入 `suite-bootstrap` 卷中的 `emqx_api_key.conf`；若文件已存在则跳过，保证重启 / 升级不会改变凭据。
+- **`emqx`**：通过 `EMQX_API_KEY__BOOTSTRAP_FILE` 加载上述 Key，并通过 `EMQX_AUTHENTICATION__1` 自动配置 HTTP 认证指向 `http://sas:8080/auth`。
+- **`fas-init`**（一次性）：从 `suite-bootstrap` 读取 API Key / Secret，执行 `dotnet fmo-audit-service.dll --configure` 完成 FAS 侧 EMQX 连接保存与 connector / rule 创建。
+- **`fas`**：在 `fas-init` 成功后启动，读取已保存的 EMQX 设置。
 
 更新时先拉取最新镜像，再由 Compose 仅重建需要更新的服务：
 
